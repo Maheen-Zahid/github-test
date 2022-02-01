@@ -23,3 +23,4 @@ Route::get('/search/users',[Controller::class, 'searchQuery']);
 Route::get('/search/user/{id}/repositories',[Controller::class, 'searchRepositoryQuery']);
 Route::get('/users/{id}',[Controller::class, 'findById']);
 Route::get('/users/popular',[Controller::class, 'getPopularUsers']);
+Route::get('/popular',[Controller::class, 'getPopularUsers']);

@@ -3,12 +3,14 @@
 namespace App\Http\Controllers;
 
 use App\Models\Repository;
+use App\Models\SearchLog;
 use App\Models\User;
 use App\Models\UserPopularity;
 use Carbon\Carbon;
 use GrahamCampbell\GitHub\Facades\GitHub as GitHubService;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller as BaseController;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class Controller extends BaseController {
@@ -24,8 +26,6 @@ class Controller extends BaseController {
 				'repos:>0',
 				'repositories'
 			);
-			Log::channel('search')->info('User Index Query ==>'."/search/repositories/?q=repos:>0&s=repositories");
-			
 			$users = Collect($response['items']);
 			$users->each(function ($user) {
 				$currentUser = User::where('user_name', $user['login'])->first(
@@ -75,8 +75,6 @@ class Controller extends BaseController {
 			$query = 'repos:>0';
 		}
 		$response = GitHubService::search()->users($query, 'repositories');
-		Log::channel('search')->info('User search Query ==>'."/search/repositories/?q=query&s=repositories");
-		
 		$users = Collect($response['items']);
 		$ids = Collect();
 		$users->each(function ($user) use ($ids) {
@@ -91,14 +89,21 @@ class Controller extends BaseController {
 			}
 			$ids->push($user->id);
 		});
-		
-		return User::whereIn('id', $ids->toArray())->orderBy(
+		$response_data = User::whereIn('id', $ids->toArray())->orderBy(
 			'popularity',
 			'DESC'
 		)->orderBy(
 			'public_repos',
 			'DESC'
-		)->simplePaginate(3)->withQueryString()->toArray();
+		)->simplePaginate(3)->withQueryString();
+		SearchLog::create(
+			[
+				'query' => $query,
+				'model' => 'Users',
+				'response' => $response_data->pluck('id')
+			]
+		);
+		return $response_data->toArray();
 	}
 	
 	/**
@@ -112,7 +117,8 @@ class Controller extends BaseController {
 		UserPopularity::create(
 			[
 				'popularity'=> $user->popularity,
-				'user_id'=>$user->id
+				'user_id'=>$user->id,
+				'created_at'=>Carbon::now(),
 			]
 		);
 		$repositories = Collect(
@@ -158,9 +164,6 @@ class Controller extends BaseController {
 			$query = '&q=' . $request->query('q');
 		}
 		$response = GitHubService::search()->repositories($query, 'forks');
-		
-		Log::channel('search')->info('Repositories against user Query ==>'.'/users/{username}/repositories/?q=query&s=forks');
-		
 		$repositories = Collect($response['items']);
 		$ids = Collect();
 		$repositories->each(function ($repo) use ($ids, $id) {
@@ -176,8 +179,16 @@ class Controller extends BaseController {
 			}
 			$ids->push($repo->id);
 		});
-		
-		return Repository::whereIn('id', $ids->toArray())->get()->toArray();
+		$response_data = Repository::whereIn('id', $ids->toArray())
+		                           ->get();
+		SearchLog::create(
+			[
+				'query' => str_replace('&q=','',$query),
+				'model' => 'Repository',
+				'response' => $response_data->pluck('id')
+			]
+		);
+		return $response_data->toArray();
 	}
 	
 	public function getPopularUsers(Request $request){
@@ -185,14 +196,11 @@ class Controller extends BaseController {
 		if($request->query('date') !== null ){
 			$date = Carbon::parse($request->query('date'));
 		}
-		$ids = UserPopularity::whereDate('created_at', $date)
-		        ->groupBy('user_id')
-		              ->having(
-						  'created_at',
-						  '<',
-						  Carbon::now()
-		              )->orderBy('popularity','DESC')->take(3)->pluck('user_id');
-		
+		$ids = UserPopularity::whereDate('created_at','<', $date)
+		                     ->groupBy('user_id')
+							 ->orderBy('popularity','DESC')
+							 ->take(3)
+		                     ->pluck('user_id');
 		return User::whereIn('id',$ids)->simplePaginate();
 	}
 }
