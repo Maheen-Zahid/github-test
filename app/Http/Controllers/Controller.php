@@ -10,7 +10,6 @@ use Carbon\Carbon;
 use GrahamCampbell\GitHub\Facades\GitHub as GitHubService;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller as BaseController;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class Controller extends BaseController {
@@ -111,32 +110,37 @@ class Controller extends BaseController {
 	 * @return mixed
 	 */
 	public function findById ($id) {
-		$user = User::findOrFail($id);
-		$user->popularity = (int)$user->popularity + 1;
-		$user->save();
-		UserPopularity::create(
-			[
-				'popularity'=> $user->popularity,
-				'user_id'=>$user->id,
-				'created_at'=>Carbon::now(),
-			]
-		);
-		$repositories = Collect(
-			GitHubService::users()->repositories($user->user_name)
-		);
-		Log::channel('search')->info('Repositories against user Query ==>'.'/users/{username}/repositories');
-		
-		$repositories->each(function ($repo) use ($id) {
-			$currentRepo = Repository::where('user_id', $id)->where(
+		try {
+			$user = User::findOrFail($id);
+			$user->popularity = (int)$user->popularity + 1;
+			$user->save();
+			UserPopularity::create(
+				[
+					'popularity'=> $user->popularity,
+					'user_id'=>$user->id,
+					'created_at'=>Carbon::now(),
+				]
+			);
+			$repositories = Collect(
+				GitHubService::users()->repositories($user->user_name)
+			);
+			Log::channel('search')->info('Repositories against user Query ==>'.'/users/{username}/repositories');
+			
+			$repositories->each(function ($repo) use ($id) {
+				$currentRepo = Repository::where('user_id', $id)->where(
 					'name',
 					$repo['name']
 				)->first();
-			if (!isset($currentRepo)) {
-				Repository::create(self::repositoryData($repo, $id));
-			}
-		});
+				if (!isset($currentRepo)) {
+					Repository::create(self::repositoryData($repo, $id));
+				}
+			});
+			
+			return $user->getResponseData(true);
+		}catch (\Exception $exception){
+			return response()->json(['status'=>404,'result'=>'User not found in our DB']);
+		}
 		
-		return $user->getResponseData(true);
 	}
 	
 	/**
@@ -159,36 +163,47 @@ class Controller extends BaseController {
 	 * @return mixed
 	 */
 	public function searchRepositoryQuery (Request $request, $id) {
-		$query = 'user:' . User::find($id)->user_name;
-		if ($query != NULL) {
-			$query = '&q=' . $request->query('q');
+		try{
+			$user = User::findOrFail($id);
+			$query = 'user:' . $user->user_name;
+			if ($request->query('q') != NULL) {
+				$query = $query.'&q=' . $request->query('q');
+			}
+			$response = GitHubService::search()->repositories($query, 'forks');
+			$repositories = Collect($response['items']);
+			$ids = Collect();
+			$repositories->each(function ($repo) use ($ids, $id) {
+				$currentRepo = Repository::where('user_id', $id)->where(
+						'name',
+						$repo['name']
+					)->first();
+				if (!isset($currentRepo)) {
+					$repo = Repository::create(self::repositoryData($repo, $id));
+				}
+				else {
+					$repo = $currentRepo;
+				}
+				$ids->push($repo->id);
+			});
+			$response_data = Repository::whereIn('id', $ids->toArray())
+			                           ->get();
+			SearchLog::create(
+				[
+					'query' => $query,
+					'model' => 'Repository',
+					'response' => $response_data->pluck('id')
+				]
+			);
+			return $response_data->toArray();
+		}catch (\Exception $exception){
+			return response()->json(
+				[
+					'status'=>404,
+					'result'=>'there was an error finding the repositories please try different keywords'
+				]
+			);
 		}
-		$response = GitHubService::search()->repositories($query, 'forks');
-		$repositories = Collect($response['items']);
-		$ids = Collect();
-		$repositories->each(function ($repo) use ($ids, $id) {
-			$currentRepo = Repository::where('user_id', $id)->where(
-					'name',
-					$repo['name']
-				)->first();
-			if (!isset($currentRepo)) {
-				$repo = Repository::create(self::repositoryData($repo, $id));
-			}
-			else {
-				$repo = $currentRepo;
-			}
-			$ids->push($repo->id);
-		});
-		$response_data = Repository::whereIn('id', $ids->toArray())
-		                           ->get();
-		SearchLog::create(
-			[
-				'query' => str_replace('&q=','',$query),
-				'model' => 'Repository',
-				'response' => $response_data->pluck('id')
-			]
-		);
-		return $response_data->toArray();
+		
 	}
 	
 	public function getPopularUsers(Request $request){
