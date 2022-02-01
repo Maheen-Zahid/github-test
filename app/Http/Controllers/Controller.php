@@ -167,7 +167,7 @@ class Controller extends BaseController {
 			$user = User::findOrFail($id);
 			$query = 'user:' . $user->user_name;
 			if ($request->query('q') != NULL) {
-				$query = $query.'&q=' . $request->query('q');
+				$query = $query.' q=' . $request->query('q');
 			}
 			$response = GitHubService::search()->repositories($query, 'forks');
 			$repositories = Collect($response['items']);
