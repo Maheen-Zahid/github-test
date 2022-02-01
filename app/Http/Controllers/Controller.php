@@ -210,6 +210,8 @@ class Controller extends BaseController {
 		$date = Carbon::now();
 		if($request->query('date') !== null ){
 			$date = Carbon::parse($request->query('date'));
+		}else{
+			$date = $date->addDay();
 		}
 		$ids = UserPopularity::whereDate('created_at','<', $date)
 		                     ->groupBy('user_id')
